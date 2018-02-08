@@ -48,10 +48,11 @@ public class CodeshipPipelineDefinition extends FlowDefinition {
 
         try (SCMFileSystem fs = SCMFileSystem.of(build.getParent(), scm)) {
             if (fs != null) {
+                String services = fs.child("codeship-services.yaml").contentAsString();
                 String steps = fs.child("codeship-steps.yaml").contentAsString();
                 listener.getLogger().println("Obtained codeship pipeline from " + scm.getKey());
 
-                String script = CodeShip.translate(steps);
+                String script = CodeShip.translate(services, steps);
 
                 return new CpsFlowExecution(script, true, owner);
             } else {
