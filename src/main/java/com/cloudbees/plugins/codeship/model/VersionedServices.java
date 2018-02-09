@@ -9,5 +9,5 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 public class VersionedServices {
 
     public String version;
-    public ExternalServices services;
+    public Services services;
 }

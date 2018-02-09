@@ -1,15 +1,12 @@
 package com.cloudbees.plugins.codeship;
 
-import com.cloudbees.plugins.codeship.model.ExternalBuild;
-import com.cloudbees.plugins.codeship.model.ExternalService;
-import com.cloudbees.plugins.codeship.model.ExternalServices;
+import com.cloudbees.plugins.codeship.model.Service;
+import com.cloudbees.plugins.codeship.model.Services;
+import com.cloudbees.plugins.codeship.model.Step;
+import com.cloudbees.plugins.codeship.model.Steps;
 import com.cloudbees.plugins.codeship.model.VersionedServices;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import org.apache.commons.beanutils.BeanUtils;
-import org.apache.commons.beanutils.BeanUtilsBean;
-import org.apache.commons.beanutils.ConvertUtilsBean;
-import org.apache.commons.beanutils.Converter;
 import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
@@ -27,10 +24,10 @@ import java.util.Map;
  */
 public class CodeShip {
 
-    public static String translate(String services_yaml, String steps_yaml) throws IOException, InvocationTargetException, IllegalAccessException {
+    public static String translate(String codeship_services_yaml, String codeship_steps_yaml) throws IOException, InvocationTargetException, IllegalAccessException {
 
         Yaml parser = new Yaml();
-        Map<String,?> map = (Map) parser.load(services_yaml);
+        Map<String,?> map = (Map) parser.load(codeship_services_yaml);
 
         // see https://documentation.codeship.com/pro/builds-and-configuration/services/#services-file-setup--configuration
 
@@ -38,16 +35,15 @@ public class CodeShip {
 
         // reproduce logic from https://github.com/codeship/jet/blob/master/service/unmarshal_external_services.go#unmarshalExternalServices
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
-        final VersionedServices versionedServices = mapper.readValue(services_yaml, VersionedServices.class);
+        final VersionedServices versionedServices = mapper.readValue(codeship_services_yaml, VersionedServices.class);
 
-        ExternalServices services;
+        Services services;
 
         if (versionedServices.version != null) {
             services = versionedServices.services;
         } else {
-            services = mapper.readValue(services_yaml, ExternalServices.class);
+            services = mapper.readValue(codeship_services_yaml, Services.class);
         }
-
 
         // Write equivalent Jenkins pipeline
 
@@ -56,26 +52,30 @@ public class CodeShip {
 
         // NOTE alternatively, we could produce a PodTemplate here
         p.println("node('docker') {");
-        for (Map.Entry<String, ExternalService> e : services.entrySet()) {
+        for (Map.Entry<String, Service> e : services.entrySet()) {
             final String name = e.getKey();
-            final ExternalService service = e.getValue();
+            final Service service = e.getValue();
 
             p.println("    def "+name+"_image = " + service.getImageForPipeline());
         }
 
+        final Steps steps = mapper.readValue(codeship_steps_yaml, Steps.class);
+
+
         p.println();
-        List<String> sorted = sortServicesByDependency(services);
-        for (String name : sorted) {
-            final ExternalService service = services.get(name);
-            p.print("    def "+name+" = "+name+"_image.run(");
-            if (service.links != null) {
-                p.print("args='");
-                for (String dependency : service.links) {
-                    p.print(" --link " + dependency);
-                }
-                p.print("'");
+
+        for (Step step : steps) {
+
+            p.println("    stage('"+step.name+"') {");
+            String args = "";
+            final Service service = services.get(step.service);
+            for (String depends : service.getLinks()) {         // TODO recursively compute list of dependencies in order
+                p.println("        def "+depends+" = docker.run('"+depends+"_image')");
+                args += " --link "+depends;
             }
-            p.println(")");
+            p.println("        "+step.service+".run(args: '"+args+"', command: '"+step.command+"')");
+
+            p.println("    }");
         }
 
         p.println("}");
@@ -83,16 +83,16 @@ public class CodeShip {
     }
 
 
-    private static List<String> sortServicesByDependency(ExternalServices services) {
+    private static List<String> sortServicesByDependency(Services services) {
 
         List<String> ordered = new ArrayList<>();
-        Map<String, ExternalService> remaining = new HashMap<>(services);
+        Map<String, Service> remaining = new HashMap<>(services);
 
         do {
-            Map<String, ExternalService> all = new HashMap<>(remaining);
+            Map<String, Service> all = new HashMap<>(remaining);
 
-            NEXT: for (Map.Entry<String, ExternalService> entry : all.entrySet()) {
-                final ExternalService service = entry.getValue();
+            NEXT: for (Map.Entry<String, Service> entry : all.entrySet()) {
+                final Service service = entry.getValue();
                 if (service.links == null) {
                     ordered.add(entry.getKey());
                     remaining.remove(entry.getKey());
